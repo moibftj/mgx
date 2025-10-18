@@ -5,7 +5,16 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from '@/components/ui/label';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,11 +38,22 @@ interface CartItem {
   price: number;
 }
 
+type PaymentMethod = 'cash' | 'qris';
+
+interface PaymentDetails {
+  method: PaymentMethod;
+  amount: number;
+  change?: number;
+}
+
 const POS = () => {
   const { user } = useAuth();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [cashAmount, setCashAmount] = useState<string>('');
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   // Get rider's available products
   const riderStocks = mockRiderStocks.filter(stock => stock.riderId === user?.id);
@@ -129,6 +149,19 @@ const POS = () => {
       toast.error('Keranjang kosong');
       return;
     }
+    setShowPaymentDialog(true);
+  };
+
+  const handlePaymentSubmit = () => {
+    const total = calculateTotal();
+    
+    if (paymentMethod === 'cash') {
+      const cashValue = parseFloat(cashAmount);
+      if (isNaN(cashValue) || cashValue < total) {
+        toast.error('Jumlah pembayaran tidak mencukupi');
+        return;
+      }
+    }
 
     // Update rider stocks
     cart.forEach(cartItem => {
@@ -138,7 +171,7 @@ const POS = () => {
       }
     });
 
-    // Create transaction (in real app, this would be saved to database)
+    // Create transaction
     const newTransaction = {
       id: Date.now().toString(),
       riderId: user?.id || '',
@@ -147,14 +180,24 @@ const POS = () => {
         quantity: item.quantity,
         price: item.price
       })),
-      total: calculateTotal(),
+      total: total,
+      paymentMethod,
+      cashAmount: paymentMethod === 'cash' ? parseFloat(cashAmount) : undefined,
+      change: paymentMethod === 'cash' ? parseFloat(cashAmount) - total : undefined,
       date: new Date().toISOString()
     };
 
-    // Clear cart
+    // Clear states
     setCart([]);
+    setCashAmount('');
+    setPaymentMethod('cash');
+    setShowPaymentDialog(false);
     
-    toast.success(`Transaksi berhasil! Total: Rp ${calculateTotal().toLocaleString('id-ID')}`);
+    const successMessage = paymentMethod === 'cash' 
+      ? `Transaksi berhasil! Total: Rp ${total.toLocaleString('id-ID')}, Kembalian: Rp ${(parseFloat(cashAmount) - total).toLocaleString('id-ID')}`
+      : `Transaksi berhasil! Total: Rp ${total.toLocaleString('id-ID')} via QRIS`;
+    
+    toast.success(successMessage);
   };
 
   return (
@@ -201,7 +244,23 @@ const POS = () => {
               const availableStock = riderStock ? riderStock.quantity - (cartItem?.quantity || 0) : 0;
 
               return (
-                <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
+                <Card 
+                  key={product.id} 
+                  className={`cursor-pointer hover:shadow-md transition-all ${
+                    availableStock > 0 
+                      ? 'hover:border-primary hover:bg-primary/5' 
+                      : 'opacity-50'
+                  }`}
+                  onClick={() => {
+                    if (availableStock > 0) {
+                      addToCart(product);
+                      // Tambahkan efek visual saat diklik
+                      const audio = new Audio();
+                      audio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAASAAAeMwAUFBQUFCIiIiIiIjAwMDAwPz8/Pz8/TU1NTU1NW1tbW1tbaWlpaWl3d3d3d3eFhYWFhYWTk5OTk5OgoKCgoK6urq6urru7u7u7u8nJycnJydvb29vb2+jo6Ojo6Pf39/f39/////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAHjMxqze0AAAAAAAAAAAAAAAAAAAAAP/7kGQAAANUMEoFPeACNQV40KEYABEY41g5vAAA9RjpZxRwAImU+W8eshaFpAQgALAAYALATx/nYDYCMJ0HITQYYA7AH4c7MoGsnCMU5pnW+OQnBcDrQ9Xx7w37/D+PimYavV8elKUpT5fqx5VjV6vZ38eJR48eRKa9KUp7v396UgPHkQwMAAAAAA//8MAOp39CECAAhlIEEIIECBAgTT1oj///tEQYT0wgEIYxgDC09aIiE7u7u7uIiIz+LtoRh+3//9xhgQAMAwAAAABhGBgDC8PAwADlASBhQMAgGIaDoYQA0BCmEANkARBBAyKCGR///+g0QSQxQT4iIYRhGEYRUy0eIiIz/////+MYxjQMSQMSQpjGMYwCEOFABk1HNRMQ09//DTmu7u7uBAAAAP/7kmRAAAIkKs4AexhQjkJJgBgJLgAAAaQAAAAgAAA0gAAABAmJkZGRoGMZC/k0eje7v1uBAAAAAAAAGGjTu7uIiIzKCGhoaCxkZGRoGMiIz///EcRxHMTEwAQEP/////gAAwAAAAAAAAAYADG8vH4AAAQAAAAAAAAAAAAAAA/+5JkQAAACgBJMAAAAIAAAlAAAAAAIAAAAAAAAAAAIAAAAAAEABsBBBAMIkAvvc7u7uBAAAAAAAAB+Q/EAGOPQ0NAGEAYTk0ePh+IAQM0ejRMQ09//DRM0eNHjR44ePGj0c3jQi5rNpCFAiNAoQEAAAAAA//73Q89PTWBgYGBAAAAAR/AAAAcR/CwD8DAD4//0ZAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMIAMnpzpz0P//9MTAwMR/EcRxHMTEwAQEP/////gAAwAAAAAAAAAYADAAAAAAAAAAAAAAA//uSZEAAAAAAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV';
+                      audio.play();
+                    }
+                  }}
+                >
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start">
                       <CardTitle className="text-lg">{product.name}</CardTitle>
@@ -219,21 +278,22 @@ const POS = () => {
                       <div className="flex gap-2">
                         <Button
                           size="sm"
-                          onClick={() => addToCart(product)}
-                          disabled={availableStock === 0}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
                           variant="outline"
-                          onClick={() => returnToWarehouse(product.id)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent card click
+                            returnToWarehouse(product.id);
+                          }}
                           disabled={!riderStock || riderStock.quantity === 0}
                         >
                           <RotateCcw className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
+                    {cartItem && (
+                      <div className="mt-2 text-sm text-muted-foreground">
+                        Dalam keranjang: {cartItem.quantity}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );
@@ -331,6 +391,113 @@ const POS = () => {
           </Card>
         </div>
       </div>
+
+      {/* Payment Dialog */}
+      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pembayaran</DialogTitle>
+            <DialogDescription>
+              Total: Rp {calculateTotal().toLocaleString('id-ID')}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              {/* Kolom Pembayaran Tunai */}
+              <div 
+                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                  paymentMethod === 'cash' 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-muted hover:border-primary/50'
+                }`}
+                onClick={() => setPaymentMethod('cash')}
+              >
+                <div className="text-center mb-4">
+                  <h3 className="font-semibold mb-1">Tunai</h3>
+                  <p className="text-sm text-muted-foreground">Pembayaran dengan uang tunai</p>
+                </div>
+                
+                {paymentMethod === 'cash' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="cashAmount">Jumlah Tunai</Label>
+                    <Input
+                      id="cashAmount"
+                      type="number"
+                      value={cashAmount}
+                      onChange={(e) => setCashAmount(e.target.value)}
+                      placeholder="Masukkan jumlah uang"
+                      className="text-lg"
+                      autoFocus
+                    />
+                    {cashAmount && !isNaN(parseFloat(cashAmount)) && (
+                      <div className="mt-2">
+                        <div className="text-sm font-medium">Total: Rp {calculateTotal().toLocaleString('id-ID')}</div>
+                        <div className="text-sm text-muted-foreground">
+                          Kembalian: Rp {Math.max(0, parseFloat(cashAmount) - calculateTotal()).toLocaleString('id-ID')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Kolom Pembayaran QRIS */}
+              <div 
+                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                  paymentMethod === 'qris' 
+                    ? 'border-primary bg-primary/5' 
+                    : 'border-muted hover:border-primary/50'
+                }`}
+                onClick={() => setPaymentMethod('qris')}
+              >
+                <div className="text-center mb-4">
+                  <h3 className="font-semibold mb-1">QRIS</h3>
+                  <p className="text-sm text-muted-foreground">Pembayaran dengan scan QR</p>
+                </div>
+
+                {paymentMethod === 'qris' && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-center text-muted-foreground">Silakan scan QR code berikut</p>
+                    <div className="border-2 border-dashed rounded-lg p-4 text-center aspect-square flex items-center justify-center">
+                      <div>
+                        <div className="text-4xl mb-2">📱</div>
+                        <div className="text-sm text-muted-foreground">QR Code</div>
+                        <div className="text-sm font-medium">Rp {calculateTotal().toLocaleString('id-ID')}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowPaymentDialog(false);
+                setCashAmount('');
+                setPaymentMethod('cash');
+              }}
+            >
+              Batal
+            </Button>
+            <Button 
+              onClick={handlePaymentSubmit}
+              disabled={
+                (paymentMethod === 'cash' && (!cashAmount || parseFloat(cashAmount) < calculateTotal())) ||
+                (paymentMethod === 'qris' && false) // Add QRIS validation here if needed
+              }
+              className="min-w-[140px]"
+            >
+              {paymentMethod === 'cash' 
+                ? `Bayar ${cashAmount ? `(${parseFloat(cashAmount).toLocaleString('id-ID')})` : ''}` 
+                : 'Konfirmasi QRIS'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
